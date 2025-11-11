@@ -57,7 +57,7 @@ function PageInner() {
   return (
     <main className="mx-auto max-w-6xl p-6 space-y-6">
       <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">BatchMail</h1>
+  <h1 className="text-3xl font-semibold tracking-tight flex items-center gap-2">BatchMail <span className="text-xs font-medium px-2 py-1 rounded bg-yellow-100 text-yellow-800 border border-yellow-300">Beta Test</span></h1>
         <p className="text-sm text-gray-800">Upload CSV, edit/upload Jinja-style HTML template, preview, and export. {totalCount ? `(${totalCount} rows)` : ""}</p>
       </header>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import nunjucks from "nunjucks";
+import Image from "next/image";
 import { useCallback, useMemo, useEffect, useState } from "react";
 import type { CsvMapping, ParsedCsv } from "./CsvUploader";
 // email editing is performed in the Template tab
@@ -26,10 +27,8 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
   const ready = !!csv && !!mapping && !!template?.trim();
   const [envOk, setEnvOk] = useState<boolean | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
-  const [sourceMap, setSourceMap] = useState<Record<string,string>>({});
-  const [uploading, setUploading] = useState(false);
-  const [showPaste, setShowPaste] = useState(false);
-  const [pasteValue, setPasteValue] = useState("");
+  const [systemVariant, setSystemVariantState] = useState<'default'|'icpep'|'cisco'>('default');
+  
 
   useEffect(() => {
     let mounted = true;
@@ -37,7 +36,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
       if (!mounted) return;
       setEnvOk(!!d.ok);
       setMissing(Array.isArray(d.missing) ? d.missing : []);
-      setSourceMap(d.source || {});
+      if (d.systemVariant === 'icpep' || d.systemVariant === 'cisco') setSystemVariantState(d.systemVariant); else setSystemVariantState('default');
     }).catch(() => {
       if (!mounted) return;
       setEnvOk(false);
@@ -46,69 +45,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
     return () => { mounted = false };
   }, []);
 
-  const uploadEnvFile = async (file: File) => {
-    const fd = new FormData();
-    fd.append('file', file);
-    setUploading(true);
-    try {
-      const res = await fetch('/api/env/upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      // Re-check
-      const chk = await fetch('/api/env');
-      const d2 = await chk.json();
-      setEnvOk(!!d2.ok);
-      setMissing(Array.isArray(d2.missing) ? d2.missing : []);
-      setSourceMap(d2.source || {});
-      if (!res.ok || !data.ok) {
-        alert(`.env upload processed but missing: ${data.missing?.join(', ') || 'unknown'}`);
-      }
-    } catch (e) {
-      alert(`.env upload failed: ${(e as Error).message}`);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const submitPaste = async () => {
-    if (!pasteValue.trim()) { setShowPaste(false); return; }
-    setUploading(true);
-    try {
-      const res = await fetch('/api/env/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ envText: pasteValue }) });
-      const data = await res.json();
-      const chk = await fetch('/api/env');
-      const d2 = await chk.json();
-      setEnvOk(!!d2.ok);
-      setMissing(Array.isArray(d2.missing) ? d2.missing : []);
-      setSourceMap(d2.source || {});
-      if (!res.ok || !data.ok) {
-        alert(`Paste processed but missing: ${data.missing?.join(', ') || 'unknown'}`);
-      }
-    } catch (e) {
-      alert(`Paste failed: ${(e as Error).message}`);
-    } finally {
-      setUploading(false);
-      setShowPaste(false);
-      setPasteValue("");
-    }
-  };
-
-  const clearUploaded = async () => {
-    setUploading(true);
-    try {
-      await fetch('/api/env/clear', { method: 'POST' });
-      const chk = await fetch('/api/env');
-      const d2 = await chk.json();
-      setEnvOk(!!d2.ok);
-      setMissing(Array.isArray(d2.missing) ? d2.missing : []);
-      setSourceMap(d2.source || {});
-    } catch (e) {
-      alert(`Clear failed: ${(e as Error).message}`);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const anyUploaded = Object.values(sourceMap).some(v => v === 'uploaded');
+  // Profiles removed from UI; using only system variant mapping.
 
   // Attachment handling removed from PreviewPane (now in CSV tab).
 
@@ -186,14 +123,37 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
           {envOk === false && (
             <span className="px-2 py-0.5 rounded border text-xs bg-red-50 border-red-200 text-red-800">Missing env: {missing.join(', ')}</span>
           )}
-          <label className="px-3 py-1 rounded border text-sm bg-white text-gray-900 hover:bg-gray-50 cursor-pointer">
-            <input type="file" accept=".env,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadEnvFile(f); }} />
-            {uploading ? 'Uploading…' : 'Upload .env'}
-          </label>
-          <button type="button" onClick={() => setShowPaste(true)} className="px-3 py-1 rounded border text-sm bg-white hover:bg-gray-50">Paste .env</button>
-          {anyUploaded && (
-            <button type="button" onClick={clearUploaded} disabled={uploading} className="px-3 py-1 rounded border text-sm bg-white hover:bg-gray-50 disabled:opacity-50">Clear uploaded</button>
-          )}
+          <div className="flex items-center gap-2 text-xs">
+            <label className="opacity-70">System env:</label>
+            <select
+              className="border rounded px-3 py-1 bg-white text-sm text-gray-900 hover:bg-gray-50 cursor-pointer h-8"
+              value={systemVariant}
+              onChange={async (e) => {
+                const val = e.target.value as 'default'|'icpep'|'cisco';
+                try {
+                  await fetch('/api/env/variant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variant: val }) });
+                } catch {}
+                const chk = await fetch('/api/env');
+                const d2 = await chk.json();
+                setEnvOk(!!d2.ok);
+                setMissing(Array.isArray(d2.missing) ? d2.missing : []);
+                if (d2.systemVariant === 'icpep' || d2.systemVariant === 'cisco') setSystemVariantState(d2.systemVariant); else setSystemVariantState('default');
+              }}
+            >
+              <option value="default">Default (.env)</option>
+              <option value="icpep">ICPEP SE - PUP Manila</option>
+              <option value="cisco">CNCP - Cisco NetConnect PUP</option>
+            </select>
+          </div>
+          {/* Brand logo based on selection */}
+          {(() => {
+            // Decide brand from system variant
+            const isIcpep = systemVariant === 'icpep';
+            const isCisco = systemVariant === 'cisco';
+            if (isIcpep) return <Image src="/icpep-logo.jpg" alt="ICPEP" width={80} height={32} className="h-8 w-auto rounded-sm border" />;
+            if (isCisco) return <Image src="/cisco-logo.jpg" alt="Cisco" width={80} height={32} className="h-8 w-auto rounded-sm border" />;
+            return null;
+          })()}
           <button
             type="button"
             disabled={!ready}
@@ -208,6 +168,12 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
             onClick={async () => {
               if (!ready || !csv || !mapping || isSending || cooldownSec > 0) return;
               try {
+                // Confirmation for ICPEP/Cisco
+                if (systemVariant === 'icpep' || systemVariant === 'cisco') {
+                  const label = systemVariant === 'icpep' ? 'ICPEP SE - PUP Manila' : 'CNCP - Cisco NetConnect PUP';
+                  const ok = window.confirm(`You are using ${label}. Are you sure to send the email?`);
+                  if (!ok) return;
+                }
                 setIsSending(true);
                 const body: {
                   rows: Array<Record<string,string>>;
@@ -320,21 +286,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
         </div>
       </div>
     </div>
-    {showPaste && (
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-        <div className="bg-white rounded shadow-lg w-full max-w-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium">Paste .env content</h3>
-            <button onClick={() => setShowPaste(false)} className="text-xs px-2 py-1 border rounded">Close</button>
-          </div>
-          <textarea value={pasteValue} onChange={(e) => setPasteValue(e.target.value)} rows={8} className="w-full border rounded p-2 text-xs font-mono" placeholder="SENDER_EMAIL=you@example.com\nSENDER_APP_PASSWORD=app-password\nSENDER_NAME=Your Name" />
-          <div className="flex justify-end gap-2">
-            <button onClick={() => setShowPaste(false)} className="px-3 py-1 border rounded text-sm">Cancel</button>
-            <button onClick={submitPaste} disabled={uploading} className="px-3 py-1 border rounded text-sm bg-green-600 text-white disabled:opacity-50">Save</button>
-          </div>
-        </div>
-      </div>
-    )}
+    {/* Paste/Upload removed with profiles */}
     {/* Streaming progress UI removed */}
     {showSendModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

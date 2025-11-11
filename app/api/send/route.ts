@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import nunjucks from "nunjucks";
-import { getOverrideEnv } from "../env/store";
+import { getActiveEnv } from "../env/store";
 
 type Mapping = { recipient: string; name: string; subject?: string };
 type Row = Record<string, string>;
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Missing required fields (rows, mapping, template)" }, { status: 400 });
   }
 
-  const override = getOverrideEnv();
+  const override = getActiveEnv();
   const SENDER_EMAIL = override.SENDER_EMAIL || process.env.SENDER_EMAIL;
   const SENDER_APP_PASSWORD = override.SENDER_APP_PASSWORD || process.env.SENDER_APP_PASSWORD;
   const SENDER_NAME = override.SENDER_NAME || process.env.SENDER_NAME || SENDER_EMAIL;
