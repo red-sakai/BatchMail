@@ -4,6 +4,7 @@ import nunjucks from "nunjucks";
 import { useCallback, useMemo, useEffect, useState } from "react";
 import type { CsvMapping, ParsedCsv } from "./CsvUploader";
 // email editing is performed in the Template tab
+import type { AttachIndex } from "./AttachmentsUploader";
 
 
 type Props = {
@@ -11,16 +12,17 @@ type Props = {
   mapping: CsvMapping | null;
   template: string;
   onExportJson: (render: (row: Record<string, string>) => string) => void;
-  onSendEmails?: () => void;
-  onTemplateChange?: (next: string) => void;
   subjectTemplate?: string;
   onSubjectChange?: (next: string) => void;
+  attachmentsByName?: AttachIndex;
 };
 
-export default function PreviewPane({ csv, mapping, template, onExportJson, subjectTemplate = "", onSubjectChange }: Props) {
+export default function PreviewPane({ csv, mapping, template, onExportJson, subjectTemplate = "", onSubjectChange, attachmentsByName }: Props) {
   const [showSendModal, setShowSendModal] = useState(false);
-  const [sendModalLogs, setSendModalLogs] = useState<Array<{ to:string; status:string; subject?: string; error?: string; messageId?: string }>>([]);
+  const [sendModalLogs, setSendModalLogs] = useState<Array<{ to:string; status:string; subject?: string; error?: string; messageId?: string; attachments?: number }>>([]);
   const [sendModalSummary, setSendModalSummary] = useState<{ sent:number; failed:number }>({ sent: 0, failed: 0 });
+  const [isSending, setIsSending] = useState(false);
+  const [cooldownSec, setCooldownSec] = useState(0);
   const ready = !!csv && !!mapping && !!template?.trim();
   const [envOk, setEnvOk] = useState<boolean | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
@@ -108,6 +110,18 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
 
   const anyUploaded = Object.values(sourceMap).some(v => v === 'uploaded');
 
+  // Attachment handling removed from PreviewPane (now in CSV tab).
+
+  // Cooldown timer: when cooldownSec > 0, tick down every second
+  useEffect(() => {
+    if (cooldownSec <= 0) return;
+    const id = setInterval(() => {
+      setCooldownSec((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [cooldownSec]);
+
+
   const renderRow = useCallback(
     (row: Record<string, string>) => {
       if (!mapping) return template;
@@ -190,23 +204,36 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
           </button>
           <button
             type="button"
-            disabled={!ready || envOk === false}
+            disabled={!ready || envOk === false || isSending || cooldownSec > 0}
             onClick={async () => {
-              if (!ready || !csv || !mapping) return;
+              if (!ready || !csv || !mapping || isSending || cooldownSec > 0) return;
               try {
-                const body = { rows: csv.rows.filter(r => r[mapping.recipient]), mapping, template, subjectTemplate: subjectTemplate?.trim() || undefined };
+                setIsSending(true);
+                const body: {
+                  rows: Array<Record<string,string>>;
+                  mapping: typeof mapping;
+                  template: string;
+                  subjectTemplate?: string;
+                  attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
+                } = {
+                  rows: csv.rows.filter(r => r[mapping.recipient]),
+                  mapping,
+                  template,
+                  subjectTemplate: subjectTemplate?.trim() || undefined,
+                  attachmentsByName,
+                };
                 const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 const data = await res.json();
                 if (!res.ok) {
                   alert(data?.error || 'Send failed');
                 }
-                type ApiSuccess = { to: string; messageId?: string; subject?: string };
-                type ApiFailure = { to?: string; subject?: string; error: string };
+                type ApiSuccess = { to: string; messageId?: string; subject?: string; attachedCount?: number };
+                type ApiFailure = { to?: string; subject?: string; error: string; attemptedAttachments?: number };
                 const successes: ApiSuccess[] = Array.isArray(data?.successes) ? (data.successes as ApiSuccess[]) : [];
                 const failures: ApiFailure[] = Array.isArray(data?.failures) ? (data.failures as ApiFailure[]) : [];
                 const modalLogs = [
-                  ...successes.map(s => ({ to: s.to, status: 'sent', subject: s.subject, messageId: s.messageId })),
-                  ...failures.map(f => ({ to: f.to || '-', status: 'error', subject: f.subject, error: f.error }))
+                  ...successes.map(s => ({ to: s.to, status: 'sent', subject: s.subject, messageId: s.messageId, attachments: s.attachedCount })),
+                  ...failures.map(f => ({ to: f.to || '-', status: 'error', subject: f.subject, error: f.error, attachments: f.attemptedAttachments }))
                 ];
                 setSendModalLogs(modalLogs);
                 setSendModalSummary({ sent: Number(data?.sent) || successes.length, failed: Number(data?.failed) || failures.length });
@@ -214,15 +241,32 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
               } catch (e) {
                 alert(`Send error: ${(e as Error).message}`);
               } finally {
+                setIsSending(false);
+                // Start a short cooldown to prevent accidental double-sends
+                setCooldownSec(5);
               }
             }}
-            className={`px-3 py-1 rounded border text-sm ${ready && envOk !== false ? "bg-green-600 border-green-700 text-white hover:bg-green-700" : "opacity-50 cursor-not-allowed"}`}
+            className={`px-3 py-1 rounded border text-sm ${ready && envOk !== false && !isSending && cooldownSec === 0 ? "bg-green-600 border-green-700 text-white hover:bg-green-700" : "opacity-50 cursor-not-allowed"} ${isSending ? 'cursor-wait' : ''}`}
           >
-            Send Emails
+            {isSending ? (
+              <span className="inline-flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                </svg>
+                Sending…
+              </span>
+            ) : cooldownSec > 0 ? (
+              `Wait ${cooldownSec}s`
+            ) : (
+              'Send Emails'
+            )}
           </button>
           {/* Stream Send button removed per user request */}
         </div>
       </div>
+
+      {/* Attachments uploader moved to CSV tab */}
 
       {!csv && <div className="text-sm opacity-80">Upload a CSV to see previews.</div>}
       {csv && !mapping && <div className="text-sm opacity-80">Set column mapping to preview emails.</div>}
@@ -311,6 +355,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
                     <th className="text-left px-2 py-1 border">Recipient</th>
                     <th className="text-left px-2 py-1 border">Status</th>
                     <th className="text-left px-2 py-1 border">Subject</th>
+                    <th className="text-left px-2 py-1 border">Attachments</th>
                     <th className="text-left px-2 py-1 border">Message / Error</th>
                   </tr>
                 </thead>
@@ -320,6 +365,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
                       <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.to}</td>
                       <td className={`px-2 py-1 border ${l.status === 'sent' ? 'text-green-700' : 'text-red-700'}`}>{l.status}</td>
                       <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.subject || ''}</td>
+                      <td className="px-2 py-1 border">{typeof l.attachments === 'number' ? l.attachments : ''}</td>
                       <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.error || l.messageId || ''}</td>
                     </tr>
                   ))}
