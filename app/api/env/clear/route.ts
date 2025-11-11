@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { clearOverrideEnv } from "../store";
+import { clearAllProfiles } from "../store";
 
 export async function POST() {
-  clearOverrideEnv();
+  clearAllProfiles();
   return NextResponse.json({ ok: true });
 }
