@@ -7,6 +7,7 @@ import CsvUploader, { CsvMapping, ParsedCsv } from "./components/ui/CsvUploader"
 import TemplateLibrary from "./components/ui/TemplateLibrary";
 import PreviewPane from "./components/ui/PreviewPane";
 import CsvTable from "./components/ui/CsvTable";
+import AttachmentsUploader, { type AttachIndex } from "./components/ui/AttachmentsUploader";
 import Tabs from "./components/ui/Tabs";
 import Docs from "./components/sections/Docs";
 
@@ -24,6 +25,7 @@ function PageInner() {
   const [mapping, setMapping] = useState<CsvMapping | null>(null);
   const [template, setTemplate] = useState<string>("<html>\n  <body>\n    <p>Hello {{ name }},</p>\n    <p>This is a sample template. Replace me!</p>\n  </body>\n</html>");
   const [subjectTemplate, setSubjectTemplate] = useState<string>("{{ subject }}");
+  const [attachmentsByName, setAttachmentsByName] = useState<AttachIndex>({});
 
 
   // Keep a derived indicator but avoid unused variable warnings.
@@ -52,32 +54,6 @@ function PageInner() {
     URL.revokeObjectURL(url);
   };
 
-  const onSendEmails = async () => {
-    if (!csv || !mapping) return;
-    const rows = csv.rows.filter((r: Record<string, string>) => r[mapping.recipient]);
-    const body = {
-      rows,
-      mapping,
-      template,
-      subjectTemplate: subjectTemplate?.trim() || undefined,
-    };
-    try {
-      const res = await fetch("/api/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        alert(`Send failed: ${data.error || res.statusText}`);
-      } else {
-        alert(`Emails sent: ${data.sent}${data.failed ? `, failed: ${data.failed}` : ""}`);
-      }
-    } catch (e) {
-      alert(`Send error: ${(e as Error).message}`);
-    }
-  };
-
   return (
     <main className="mx-auto max-w-6xl p-6 space-y-6">
       <header className="space-y-1">
@@ -96,6 +72,12 @@ function PageInner() {
                   <CsvUploader
                     onParsed={(data: { csv: ParsedCsv; mapping: CsvMapping }) => { setCsv(data.csv); setMapping(data.mapping); }}
                     currentMapping={mapping ?? undefined}
+                  />
+                  <AttachmentsUploader
+                    csv={csv}
+                    mapping={mapping}
+                    value={attachmentsByName}
+                    onChange={setAttachmentsByName}
                   />
                   <CsvTable
                     csv={csv}
@@ -131,10 +113,9 @@ function PageInner() {
                   mapping={mapping}
                   template={template}
                   onExportJson={onExportJson}
-                  onSendEmails={onSendEmails}
-                  onTemplateChange={setTemplate}
                   subjectTemplate={subjectTemplate}
                   onSubjectChange={setSubjectTemplate}
+                  attachmentsByName={attachmentsByName}
                 />
               ),
             },

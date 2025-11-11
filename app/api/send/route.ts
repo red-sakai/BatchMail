@@ -11,9 +11,10 @@ type Payload = {
   template: string;
   subjectTemplate?: string;
   dryRun?: boolean;
+  attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
 };
-type Success = { to: string; messageId?: string; subject?: string; previewLength?: number };
-type Failure = { to?: string; row?: Row; subject?: string; error: string };
+type Success = { to: string; messageId?: string; subject?: string; previewLength?: number; attachedCount?: number };
+type Failure = { to?: string; row?: Row; subject?: string; error: string; attemptedAttachments?: number };
 
 // Expect JSON body: { rows: Array<Record<string,string>>, mapping: { recipient: string, name: string, subject?: string }, template: string, subjectTemplate?: string, dryRun?: boolean }
 
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { rows, mapping, template, subjectTemplate, dryRun } = (payload || {}) as Payload;
+  const { rows, mapping, template, subjectTemplate, dryRun, attachmentsByName } = (payload || {}) as Payload;
   if (!rows || !Array.isArray(rows) || !mapping || !template) {
     return NextResponse.json({ ok: false, error: "Missing required fields (rows, mapping, template)" }, { status: 400 });
   }
@@ -51,6 +52,8 @@ export async function POST(req: Request) {
   const successes: Success[] = [];
   const failures: Failure[] = [];
 
+  const normalize = (s: string) => s.trim().toLowerCase();
+
   for (const r of rows) {
     const to = r[mapping.recipient];
     if (!to) continue;
@@ -75,8 +78,12 @@ export async function POST(req: Request) {
       subject = "";
     }
 
+    const nameRaw = r[mapping.name] || "";
+    const nameKey = normalize(String(nameRaw));
+    const atts = attachmentsByName && nameKey ? (attachmentsByName[nameKey] || []) : [];
+
     if (dryRun) {
-      successes.push({ to, subject, previewLength: html.length });
+      successes.push({ to, subject, previewLength: html.length, attachedCount: atts.length });
       continue;
     }
 
@@ -86,10 +93,11 @@ export async function POST(req: Request) {
         to,
         subject: subject || "",
         html,
+        attachments: atts.map(a => ({ filename: a.filename, content: a.contentBase64, encoding: "base64", contentType: a.contentType })),
       });
-      successes.push({ to, messageId: info.messageId, subject });
+      successes.push({ to, messageId: info.messageId, subject, attachedCount: atts.length });
     } catch (e: unknown) {
-      failures.push({ to, subject, error: (e as Error).message });
+      failures.push({ to, subject, error: (e as Error).message, attemptedAttachments: atts.length });
     }
   }
 

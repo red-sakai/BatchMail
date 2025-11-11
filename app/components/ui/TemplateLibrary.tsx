@@ -74,7 +74,20 @@ export default function TemplateLibrary({ availableVars = [], initialHtml, onUse
     setActiveId(clone.id);
   };
 
-  // Future: add deletion feature if needed.
+  const deleteTemplate = (id: string) => {
+    setTemplates(prev => {
+      const filtered = prev.filter(t => t.id !== id);
+      if (filtered.length === 0) {
+        // Always keep at least one blank template
+        const fallback: SavedTemplate = { id: uuid(), name: "Untitled", html: "", updatedAt: Date.now() };
+        setActiveId(fallback.id);
+        return [fallback];
+      }
+      // Reset active if we deleted current
+      if (id === activeId) setActiveId(filtered[0].id);
+      return filtered;
+    });
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
@@ -86,10 +99,22 @@ export default function TemplateLibrary({ availableVars = [], initialHtml, onUse
         </div>
         <div className="max-h-96 overflow-auto text-sm">
           {templates.map(t => (
-            <button key={t.id} onClick={() => setActiveId(t.id)} className={`w-full text-left px-3 py-2 border-b hover:bg-gray-50 ${t.id === active.id ? 'bg-gray-50' : ''}`}>
-              <div className="font-medium truncate">{t.name || 'Untitled'}</div>
-              <div className="text-xs text-gray-500 truncate">HTML template</div>
-            </button>
+            <div key={t.id} className={`group flex items-center justify-between gap-2 px-3 py-2 border-b ${t.id === active.id ? 'bg-gray-50' : 'hover:bg-gray-50'}`}>
+              <button onClick={() => setActiveId(t.id)} className="flex-1 text-left">
+                <div className="font-medium truncate">{t.name || 'Untitled'}</div>
+                <div className="text-xs text-gray-500 truncate">HTML template</div>
+              </button>
+              {templates.length > 1 && (
+                <button
+                  type="button"
+                  aria-label="Delete template"
+                  onClick={() => deleteTemplate(t.id)}
+                  className="opacity-60 group-hover:opacity-100 text-xs px-2 py-1 rounded border bg-white hover:bg-red-50 hover:text-red-700"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </div>
