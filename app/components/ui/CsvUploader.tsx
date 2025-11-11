@@ -1,7 +1,7 @@
 "use client";
 
 import Papa from "papaparse";
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
 
 export type ParsedCsv = {
   headers: string[];
@@ -33,10 +33,13 @@ export default function CsvUploader({ onParsed, currentMapping }: Props) {
   const [csv, setCsv] = useState<ParsedCsv | null>(null);
   const [mapping, setMapping] = useState<CsvMapping | null>(currentMapping ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string>("");
+  const [dragActive, setDragActive] = useState<boolean>(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const handleFile = (file: File) => {
+  const handleFile = useCallback((file: File) => {
     setError(null);
+    setFileName(file.name);
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: true,
@@ -65,7 +68,7 @@ export default function CsvUploader({ onParsed, currentMapping }: Props) {
         setError(msg);
       },
     });
-  };
+  }, [mapping, onParsed]);
 
   const onChangeSelect = (key: keyof CsvMapping, value: string) => {
     if (!csv) return;
@@ -74,93 +77,125 @@ export default function CsvUploader({ onParsed, currentMapping }: Props) {
     onParsed({ csv, mapping: next });
   };
 
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (file.type.includes("csv") || file.name.endsWith(".csv")) {
+        handleFile(file);
+      } else {
+        setError("Only .csv files are supported.");
+      }
+    }
+  }, [handleFile]);
+
+  const onDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true);
+    else if (e.type === "dragleave") setDragActive(false);
+  }, []);
+
   return (
     <div className="rounded-lg border p-4 space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-medium">1) Upload CSV</h2>
-          <p className="text-xs opacity-80">CSV with headers, including recipient and name columns.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-            }}
-            className="block text-sm"
-          />
-          {csv && (
-            <button
-              type="button"
-              onClick={() => {
-                if (fileRef.current) fileRef.current.value = "";
-                setCsv(null);
-                setMapping(null);
-                setError(null);
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">1) Upload CSV</h2>
+            <p className="text-sm opacity-80">Provide a CSV with a header row. Drag & drop or use the button.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileRef}
+              id="csv-file-input"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
               }}
-              className="rounded border px-2 py-1 text-xs bg-white text-gray-800 border-gray-300 hover:bg-gray-50"
+              className="sr-only"
+            />
+            <label
+              htmlFor="csv-file-input"
+              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium shadow-sm cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-green-600"
             >
-              Reset
-            </button>
-          )}
+              <span className="inline-block">{fileName || "Choose CSV"}</span>
+            </label>
+            {csv && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (fileRef.current) fileRef.current.value = "";
+                  setCsv(null);
+                  setMapping(null);
+                  setError(null);
+                  setFileName("");
+                }}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium shadow-sm hover:bg-gray-50"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </div>
+        <div
+          onDragEnter={onDrag}
+          onDragOver={onDrag}
+          onDragLeave={onDrag}
+          onDrop={onDrop}
+          className={`group relative rounded-md border border-dashed p-6 text-center transition-colors ${dragActive ? "border-green-500 bg-green-50" : "border-gray-300"}`}
+        >
+          <p className="text-sm">{dragActive ? "Release to upload CSV" : "Drag & drop CSV here or use the button above."}</p>
         </div>
       </div>
 
       {error && <div className="text-sm text-red-600">{error}</div>}
 
       {csv && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <label className="text-sm">
-              <span className="block text-xs opacity-80 mb-1">Recipient column</span>
+        <div className="space-y-4">
+          <h3 className="text-sm font-medium">Map Columns</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <label className="text-sm flex flex-col gap-1">
+              <span className="text-xs font-medium opacity-80">Recipient column</span>
               <select
-                className="w-full rounded border px-2 py-1 text-sm bg-background border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400"
+                className="w-full rounded-md border px-2 py-1.5 text-sm bg-white border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-600"
                 value={mapping?.recipient || ""}
                 onChange={(e) => onChangeSelect("recipient", e.target.value)}
               >
                 {csv.headers.map((h) => (
-                  <option value={h} key={h}>
-                    {h}
-                  </option>
+                  <option value={h} key={h}>{h}</option>
                 ))}
               </select>
             </label>
-
-            <label className="text-sm">
-              <span className="block text-xs opacity-80 mb-1">Name column</span>
+            <label className="text-sm flex flex-col gap-1">
+              <span className="text-xs font-medium opacity-80">Name column</span>
               <select
-                className="w-full rounded border px-2 py-1 text-sm bg-background border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400"
+                className="w-full rounded-md border px-2 py-1.5 text-sm bg-white border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-600"
                 value={mapping?.name || ""}
                 onChange={(e) => onChangeSelect("name", e.target.value)}
               >
                 {csv.headers.map((h) => (
-                  <option value={h} key={h}>
-                    {h}
-                  </option>
+                  <option value={h} key={h}>{h}</option>
                 ))}
               </select>
             </label>
-
-            <label className="text-sm">
-              <span className="block text-xs opacity-80 mb-1">Subject column (optional)</span>
+            <label className="text-sm flex flex-col gap-1">
+              <span className="text-xs font-medium opacity-80">Subject column (optional)</span>
               <select
-                className="w-full rounded border px-2 py-1 text-sm bg-background border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400"
+                className="w-full rounded-md border px-2 py-1.5 text-sm bg-white border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-600"
                 value={mapping?.subject || ""}
                 onChange={(e) => onChangeSelect("subject", e.target.value)}
               >
                 <option value="">— None —</option>
                 {csv.headers.map((h) => (
-                  <option value={h} key={h}>
-                    {h}
-                  </option>
+                  <option value={h} key={h}>{h}</option>
                 ))}
               </select>
             </label>
           </div>
-
           <div className="text-xs opacity-80">Rows parsed: {csv.rowCount}</div>
         </div>
       )}

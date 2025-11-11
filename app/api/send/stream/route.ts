@@ -74,8 +74,9 @@ export async function POST(req: Request) {
   return new Response(stream, {
     headers: {
       "Content-Type": "application/x-ndjson",
-      "Cache-Control": "no-cache",
-      "Transfer-Encoding": "chunked",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
     }
   });
 }
