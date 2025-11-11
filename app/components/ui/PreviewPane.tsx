@@ -1,10 +1,9 @@
 "use client";
 
 import nunjucks from "nunjucks";
-import { useCallback, useMemo, useRef, useEffect, useState } from "react";
+import { useCallback, useMemo, useEffect, useState } from "react";
 import type { CsvMapping, ParsedCsv } from "./CsvUploader";
-import EmailEditor, { EmailEditorHandle } from "./EmailEditor";
-import VariablePicker from "./VariablePicker";
+// email editing is performed in the Template tab
 
 
 type Props = {
@@ -18,11 +17,10 @@ type Props = {
   onSubjectChange?: (next: string) => void;
 };
 
-export default function PreviewPane({ csv, mapping, template, onExportJson, onSendEmails, onTemplateChange, subjectTemplate = "", onSubjectChange }: Props) {
-  const [sending, setSending] = useState(false);
-  const [progress, setProgress] = useState<{ total: number; sent: number; failed: number } | null>(null);
-  const [logs, setLogs] = useState<Array<{ index:number; to:string; status:string; subject?: string; error?: string }>>([]);
-  const editorRef = useRef<EmailEditorHandle | null>(null);
+export default function PreviewPane({ csv, mapping, template, onExportJson, subjectTemplate = "", onSubjectChange }: Props) {
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [sendModalLogs, setSendModalLogs] = useState<Array<{ to:string; status:string; subject?: string; error?: string; messageId?: string }>>([]);
+  const [sendModalSummary, setSendModalSummary] = useState<{ sent:number; failed:number }>({ sent: 0, failed: 0 });
   const ready = !!csv && !!mapping && !!template?.trim();
   const [envOk, setEnvOk] = useState<boolean | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
@@ -167,28 +165,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, onSe
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-lg font-medium">3) Preview & Export</h2>
         <div className="flex items-center gap-2">
-          <VariablePicker
-            variables={availableVars}
-            label="Insert variable"
-            onInsert={(v) => {
-              const active = document.activeElement as HTMLElement | null;
-              const token = `{{ ${v} }}`;
-              if (active && active.tagName === 'INPUT') {
-                const el = active as HTMLInputElement;
-                const current = subjectTemplate || "";
-                const start = el.selectionStart ?? current.length;
-                const end = el.selectionEnd ?? start;
-                const next = current.slice(0, start) + token + current.slice(end);
-                onSubjectChange?.(next);
-                setTimeout(() => {
-                  try { el.focus(); el.setSelectionRange(start + token.length, start + token.length); } catch {}
-                }, 0);
-              } else {
-                editorRef.current?.insertVariable(v);
-                editorRef.current?.focus();
-              }
-            }}
-          />
+          {/* Variable insertion moved to Template tab */}
           {envOk === true && (
             <span className="px-2 py-0.5 rounded border text-xs bg-green-50 border-green-200 text-green-800">Sender env OK</span>
           )}
@@ -214,59 +191,36 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, onSe
           <button
             type="button"
             disabled={!ready || envOk === false}
-            onClick={() => ready && onSendEmails?.()}
+            onClick={async () => {
+              if (!ready || !csv || !mapping) return;
+              try {
+                const body = { rows: csv.rows.filter(r => r[mapping.recipient]), mapping, template, subjectTemplate: subjectTemplate?.trim() || undefined };
+                const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                const data = await res.json();
+                if (!res.ok) {
+                  alert(data?.error || 'Send failed');
+                }
+                type ApiSuccess = { to: string; messageId?: string; subject?: string };
+                type ApiFailure = { to?: string; subject?: string; error: string };
+                const successes: ApiSuccess[] = Array.isArray(data?.successes) ? (data.successes as ApiSuccess[]) : [];
+                const failures: ApiFailure[] = Array.isArray(data?.failures) ? (data.failures as ApiFailure[]) : [];
+                const modalLogs = [
+                  ...successes.map(s => ({ to: s.to, status: 'sent', subject: s.subject, messageId: s.messageId })),
+                  ...failures.map(f => ({ to: f.to || '-', status: 'error', subject: f.subject, error: f.error }))
+                ];
+                setSendModalLogs(modalLogs);
+                setSendModalSummary({ sent: Number(data?.sent) || successes.length, failed: Number(data?.failed) || failures.length });
+                setShowSendModal(true);
+              } catch (e) {
+                alert(`Send error: ${(e as Error).message}`);
+              } finally {
+              }
+            }}
             className={`px-3 py-1 rounded border text-sm ${ready && envOk !== false ? "bg-green-600 border-green-700 text-white hover:bg-green-700" : "opacity-50 cursor-not-allowed"}`}
           >
             Send Emails
           </button>
-          {ready && envOk && !sending && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (!csv || !mapping) return;
-                setSending(true);
-                setProgress(null);
-                setLogs([]);
-                try {
-                  const body = { rows: csv.rows, mapping, template, subjectTemplate };
-                  const res = await fetch('/api/send/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-                  if (!res.ok || !res.body) throw new Error('Stream failed');
-                  const reader = res.body.getReader();
-                  const decoder = new TextDecoder();
-                  let buffer = '';
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    let idx: number;
-                    while ((idx = buffer.indexOf('\n')) !== -1) {
-                      const line = buffer.slice(0, idx).trim();
-                      buffer = buffer.slice(idx + 1);
-                      if (!line) continue;
-                      try {
-                        const evt = JSON.parse(line);
-                        if (evt.type === 'start') {
-                          setProgress({ total: evt.total, sent: 0, failed: 0 });
-                        } else if (evt.type === 'item') {
-                          setLogs(l => [...l, { index: evt.index, to: evt.to, status: evt.status, subject: evt.subject, error: evt.error }]);
-                          setProgress(p => p ? { ...p, sent: evt.status === 'sent' ? p.sent + 1 : p.sent, failed: evt.status === 'error' ? p.failed + 1 : p.failed } : p);
-                        } else if (evt.type === 'done') {
-                          setProgress(p => p ? { ...p, sent: evt.sent, failed: evt.failed } : p);
-                        }
-                      } catch {}
-                    }
-                  }
-                } catch (e) {
-                  alert(`Streaming error: ${(e as Error).message}`);
-                } finally {
-                  setSending(false);
-                }
-              }}
-              className="px-3 py-1 rounded border text-sm bg-blue-600 border-blue-700 text-white hover:bg-blue-700"
-            >
-              Stream Send
-            </button>
-          )}
+          {/* Stream Send button removed per user request */}
         </div>
       </div>
 
@@ -318,23 +272,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, onSe
             )}
           </div>
 
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Edit email (WYSIWYG)</div>
-          <EmailEditor
-              ref={editorRef}
-            value={template}
-            onChange={(html) => onTemplateChange?.(html)}
-            variables={(() => {
-              const s = new Set<string>();
-              const re = /\{\{\s*([a-zA-Z_][\w\.]*)\s*\}\}/g;
-              let m: RegExpExecArray | null;
-              while ((m = re.exec(template))) s.add(m[1]);
-              if (csv?.headers) csv.headers.forEach((h) => s.add(h));
-              if (mapping) { s.add("name"); s.add("recipient"); }
-              return Array.from(s);
-            })()}
-          />
-          </div>
+          {/* Editor removed from Preview; edit HTML in Template tab */}
         </div>
       </div>
     </div>
@@ -353,31 +291,42 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, onSe
         </div>
       </div>
     )}
-    {sending && progress && (
-      <div className="mt-4 space-y-3">
-        <div className="w-full bg-gray-100 h-3 rounded overflow-hidden">
-          <div
-            className="h-3 bg-green-600 transition-all"
-            style={{ width: `${progress.total ? ((progress.sent + progress.failed) / progress.total) * 100 : 0}%` }}
-          />
-        </div>
-        <div className="text-xs flex gap-4">
-          <span>Total: {progress.total}</span>
-          <span>Sent: {progress.sent}</span>
-          <span>Failed: {progress.failed}</span>
-          <span>Remaining: {progress.total - (progress.sent + progress.failed)}</span>
-        </div>
-        <div className="max-h-48 overflow-auto border rounded text-xs font-mono bg-white">
-          <ul className="divide-y">
-            {logs.map(l => (
-              <li key={l.index} className="px-2 py-1 flex gap-2">
-                <span className="w-12 text-right">#{l.index}</span>
-                <span className="flex-1 truncate">{l.to}</span>
-                <span className={l.status === 'sent' ? 'text-green-700' : 'text-red-700'}>{l.status}</span>
-                {l.error && <span className="text-red-500 truncate" title={l.error}>{l.error}</span>}
-              </li>
-            ))}
-          </ul>
+    {/* Streaming progress UI removed */}
+    {showSendModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white w-full max-w-3xl rounded shadow-lg">
+          <div className="px-4 py-3 border-b flex items-center justify-between">
+            <div className="text-sm font-medium">Send Summary</div>
+            <button className="text-xs px-2 py-1 border rounded" onClick={() => setShowSendModal(false)}>Close</button>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="text-xs flex gap-4">
+              <span><strong>Sent:</strong> {sendModalSummary.sent}</span>
+              <span><strong>Failed:</strong> {sendModalSummary.failed}</span>
+            </div>
+            <div className="max-h-72 overflow-auto border rounded text-xs font-mono bg-white">
+              <table className="min-w-full text-xs">
+                <thead className="sticky top-0 bg-gray-50">
+                  <tr>
+                    <th className="text-left px-2 py-1 border">Recipient</th>
+                    <th className="text-left px-2 py-1 border">Status</th>
+                    <th className="text-left px-2 py-1 border">Subject</th>
+                    <th className="text-left px-2 py-1 border">Message / Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sendModalLogs.map((l, i) => (
+                    <tr key={i} className="odd:bg-white even:bg-gray-50">
+                      <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.to}</td>
+                      <td className={`px-2 py-1 border ${l.status === 'sent' ? 'text-green-700' : 'text-red-700'}`}>{l.status}</td>
+                      <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.subject || ''}</td>
+                      <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.error || l.messageId || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     )}

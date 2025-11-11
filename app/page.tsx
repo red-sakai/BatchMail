@@ -3,7 +3,8 @@
 import { useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CsvUploader, { CsvMapping, ParsedCsv } from "./components/ui/CsvUploader";
-import TemplateManager from "./components/ui/TemplateManager";
+// Legacy TemplateManager import removed; using TemplateLibrary instead.
+import TemplateLibrary from "./components/ui/TemplateLibrary";
 import PreviewPane from "./components/ui/PreviewPane";
 import CsvTable from "./components/ui/CsvTable";
 import Tabs from "./components/ui/Tabs";
@@ -108,7 +109,18 @@ function PageInner() {
             {
               id: "template",
               label: "Template",
-              content: <TemplateManager value={template} onChange={setTemplate} />,
+              content: (
+                <TemplateLibrary
+                  availableVars={useMemo(() => {
+                    const s = new Set<string>();
+                    if (csv?.headers) csv.headers.forEach(h => s.add(h));
+                    if (mapping) { s.add("name"); s.add("recipient"); }
+                    return Array.from(s);
+                  }, [csv, mapping])}
+                  initialHtml={template}
+                  onUseTemplate={({ html }) => { setTemplate(html); }}
+                />
+              ),
             },
             {
               id: "preview",

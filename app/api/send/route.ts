@@ -13,7 +13,7 @@ type Payload = {
   dryRun?: boolean;
 };
 type Success = { to: string; messageId?: string; subject?: string; previewLength?: number };
-type Failure = { to?: string; row?: Row; error: string };
+type Failure = { to?: string; row?: Row; subject?: string; error: string };
 
 // Expect JSON body: { rows: Array<Record<string,string>>, mapping: { recipient: string, name: string, subject?: string }, template: string, subjectTemplate?: string, dryRun?: boolean }
 
@@ -87,9 +87,9 @@ export async function POST(req: Request) {
         subject: subject || "",
         html,
       });
-      successes.push({ to, messageId: info.messageId });
+      successes.push({ to, messageId: info.messageId, subject });
     } catch (e: unknown) {
-      failures.push({ to, error: (e as Error).message });
+      failures.push({ to, subject, error: (e as Error).message });
     }
   }
 
