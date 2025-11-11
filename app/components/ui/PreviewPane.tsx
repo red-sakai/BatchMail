@@ -24,6 +24,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
   const [sendModalSummary, setSendModalSummary] = useState<{ sent:number; failed:number }>({ sent: 0, failed: 0 });
   const [isSending, setIsSending] = useState(false);
   const [cooldownSec, setCooldownSec] = useState(0);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const ready = !!csv && !!mapping && !!template?.trim();
   const [envOk, setEnvOk] = useState<boolean | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
@@ -110,6 +111,55 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
   const allUsed = useMemo(() => Array.from(new Set([...usedSubjectVars, ...usedBodyVars])), [usedSubjectVars, usedBodyVars]);
   const invalidUsed = useMemo(() => allUsed.filter((v) => !availableVars.includes(v)), [allUsed, availableVars]);
 
+  const variantLabel = useMemo(() => (
+    systemVariant === 'icpep' ? 'ICPEP SE - PUP Manila' : systemVariant === 'cisco' ? 'CNCP - Cisco NetConnect PUP' : 'Default (.env)'
+  ), [systemVariant]);
+
+  const variantLogo = useMemo(() => (
+    systemVariant === 'icpep' ? '/icpep-logo.jpg' : systemVariant === 'cisco' ? '/cisco-logo.jpg' : null
+  ), [systemVariant]);
+
+  const doSendEmails = useCallback(async () => {
+    if (!ready || !csv || !mapping) return;
+    try {
+      setIsSending(true);
+      const body: {
+        rows: Array<Record<string,string>>;
+        mapping: typeof mapping;
+        template: string;
+        subjectTemplate?: string;
+        attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
+      } = {
+        rows: csv.rows.filter(r => r[mapping.recipient]),
+        mapping,
+        template,
+        subjectTemplate: subjectTemplate?.trim() || undefined,
+        attachmentsByName,
+      };
+      const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data?.error || 'Send failed');
+      }
+      type ApiSuccess = { to: string; messageId?: string; subject?: string; attachedCount?: number };
+      type ApiFailure = { to?: string; subject?: string; error: string; attemptedAttachments?: number };
+      const successes: ApiSuccess[] = Array.isArray(data?.successes) ? (data.successes as ApiSuccess[]) : [];
+      const failures: ApiFailure[] = Array.isArray(data?.failures) ? (data.failures as ApiFailure[]) : [];
+      const modalLogs = [
+        ...successes.map(s => ({ to: s.to, status: 'sent', subject: s.subject, messageId: s.messageId, attachments: s.attachedCount })),
+        ...failures.map(f => ({ to: f.to || '-', status: 'error', subject: f.subject, error: f.error, attachments: f.attemptedAttachments }))
+      ];
+      setSendModalLogs(modalLogs);
+      setSendModalSummary({ sent: Number(data?.sent) || successes.length, failed: Number(data?.failed) || failures.length });
+      setShowSendModal(true);
+    } catch (e) {
+      alert(`Send error: ${(e as Error).message}`);
+    } finally {
+      setIsSending(false);
+      setCooldownSec(5);
+    }
+  }, [ready, csv, mapping, template, subjectTemplate, attachmentsByName]);
+
   return (
     <>
     <div className="rounded-lg border p-4 space-y-4">
@@ -168,48 +218,14 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
             onClick={async () => {
               if (!ready || !csv || !mapping || isSending || cooldownSec > 0) return;
               try {
-                // Confirmation for ICPEP/Cisco
                 if (systemVariant === 'icpep' || systemVariant === 'cisco') {
-                  const label = systemVariant === 'icpep' ? 'ICPEP SE - PUP Manila' : 'CNCP - Cisco NetConnect PUP';
-                  const ok = window.confirm(`You are using ${label}. Are you sure to send the email?`);
-                  if (!ok) return;
+                  setShowConfirmModal(true);
+                  return;
                 }
-                setIsSending(true);
-                const body: {
-                  rows: Array<Record<string,string>>;
-                  mapping: typeof mapping;
-                  template: string;
-                  subjectTemplate?: string;
-                  attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
-                } = {
-                  rows: csv.rows.filter(r => r[mapping.recipient]),
-                  mapping,
-                  template,
-                  subjectTemplate: subjectTemplate?.trim() || undefined,
-                  attachmentsByName,
-                };
-                const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-                const data = await res.json();
-                if (!res.ok) {
-                  alert(data?.error || 'Send failed');
-                }
-                type ApiSuccess = { to: string; messageId?: string; subject?: string; attachedCount?: number };
-                type ApiFailure = { to?: string; subject?: string; error: string; attemptedAttachments?: number };
-                const successes: ApiSuccess[] = Array.isArray(data?.successes) ? (data.successes as ApiSuccess[]) : [];
-                const failures: ApiFailure[] = Array.isArray(data?.failures) ? (data.failures as ApiFailure[]) : [];
-                const modalLogs = [
-                  ...successes.map(s => ({ to: s.to, status: 'sent', subject: s.subject, messageId: s.messageId, attachments: s.attachedCount })),
-                  ...failures.map(f => ({ to: f.to || '-', status: 'error', subject: f.subject, error: f.error, attachments: f.attemptedAttachments }))
-                ];
-                setSendModalLogs(modalLogs);
-                setSendModalSummary({ sent: Number(data?.sent) || successes.length, failed: Number(data?.failed) || failures.length });
-                setShowSendModal(true);
+                await doSendEmails();
               } catch (e) {
                 alert(`Send error: ${(e as Error).message}`);
               } finally {
-                setIsSending(false);
-                // Start a short cooldown to prevent accidental double-sends
-                setCooldownSec(5);
               }
             }}
             className={`px-3 py-1 rounded border text-sm ${ready && envOk !== false && !isSending && cooldownSec === 0 ? "bg-green-600 border-green-700 text-white hover:bg-green-700" : "opacity-50 cursor-not-allowed"} ${isSending ? 'cursor-wait' : ''}`}
@@ -324,6 +340,29 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      </div>
+    )}
+    {showConfirmModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded shadow-lg w-full max-w-md p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            {variantLogo && <Image src={variantLogo} alt={variantLabel} width={64} height={32} className="h-8 w-auto rounded border" />}
+            <h3 className="text-sm font-medium">Confirm Send</h3>
+          </div>
+          <p className="text-sm">You are using <strong>{variantLabel}</strong> credentials to send these emails. Are you sure you want to proceed?</p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => setShowConfirmModal(false)}
+              className="px-3 py-1 border rounded text-sm bg-white hover:bg-gray-50"
+              disabled={isSending}
+            >Cancel</button>
+            <button
+              onClick={async () => { setShowConfirmModal(false); await doSendEmails(); }}
+              className="px-3 py-1 border rounded text-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+              disabled={isSending}
+            >{isSending ? 'Sending…' : 'Yes, Send'}</button>
           </div>
         </div>
       </div>
