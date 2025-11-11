@@ -2,7 +2,10 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #111827; /* neutral slate-900 */
+  --accent: #16a34a; /* primary green reserved for navbar */
+  --accent-muted: #dcfce7; /* reserved */
+  --border: #e5e7eb; /* gray-200 */
 }
 
 @theme inline {
@@ -13,14 +16,30 @@
 }
 
 @media (prefers-color-scheme: dark) {
+  /* Keep site white in dark mode as requested */
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #ffffff;
+    --foreground: #111827;
+    --accent: #16a34a;
+    --accent-muted: #dcfce7;
+    --border: #e5e7eb;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Minimal green utilities kept for navbar only */
+.border-green-600 { border-color: #16a34a; }
+.bg-green-600 { background-color: #16a34a; }
+
+/* Card styling refinement */
+.card {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.1);
 }
