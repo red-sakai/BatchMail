@@ -19,6 +19,9 @@ type Props = {
 };
 
 export default function PreviewPane({ csv, mapping, template, onExportJson, onSendEmails, onTemplateChange, subjectTemplate = "", onSubjectChange }: Props) {
+  const [sending, setSending] = useState(false);
+  const [progress, setProgress] = useState<{ total: number; sent: number; failed: number } | null>(null);
+  const [logs, setLogs] = useState<Array<{ index:number; to:string; status:string; subject?: string; error?: string }>>([]);
   const editorRef = useRef<EmailEditorHandle | null>(null);
   const ready = !!csv && !!mapping && !!template?.trim();
   const [envOk, setEnvOk] = useState<boolean | null>(null);
@@ -216,6 +219,54 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, onSe
           >
             Send Emails
           </button>
+          {ready && envOk && !sending && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!csv || !mapping) return;
+                setSending(true);
+                setProgress(null);
+                setLogs([]);
+                try {
+                  const body = { rows: csv.rows, mapping, template, subjectTemplate };
+                  const res = await fetch('/api/send/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                  if (!res.ok || !res.body) throw new Error('Stream failed');
+                  const reader = res.body.getReader();
+                  const decoder = new TextDecoder();
+                  let buffer = '';
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    let idx: number;
+                    while ((idx = buffer.indexOf('\n')) !== -1) {
+                      const line = buffer.slice(0, idx).trim();
+                      buffer = buffer.slice(idx + 1);
+                      if (!line) continue;
+                      try {
+                        const evt = JSON.parse(line);
+                        if (evt.type === 'start') {
+                          setProgress({ total: evt.total, sent: 0, failed: 0 });
+                        } else if (evt.type === 'item') {
+                          setLogs(l => [...l, { index: evt.index, to: evt.to, status: evt.status, subject: evt.subject, error: evt.error }]);
+                          setProgress(p => p ? { ...p, sent: evt.status === 'sent' ? p.sent + 1 : p.sent, failed: evt.status === 'error' ? p.failed + 1 : p.failed } : p);
+                        } else if (evt.type === 'done') {
+                          setProgress(p => p ? { ...p, sent: evt.sent, failed: evt.failed } : p);
+                        }
+                      } catch {}
+                    }
+                  }
+                } catch (e) {
+                  alert(`Streaming error: ${(e as Error).message}`);
+                } finally {
+                  setSending(false);
+                }
+              }}
+              className="px-3 py-1 rounded border text-sm bg-blue-600 border-blue-700 text-white hover:bg-blue-700"
+            >
+              Stream Send
+            </button>
+          )}
         </div>
       </div>
 
@@ -299,6 +350,34 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, onSe
             <button onClick={() => setShowPaste(false)} className="px-3 py-1 border rounded text-sm">Cancel</button>
             <button onClick={submitPaste} disabled={uploading} className="px-3 py-1 border rounded text-sm bg-green-600 text-white disabled:opacity-50">Save</button>
           </div>
+        </div>
+      </div>
+    )}
+    {sending && progress && (
+      <div className="mt-4 space-y-3">
+        <div className="w-full bg-gray-100 h-3 rounded overflow-hidden">
+          <div
+            className="h-3 bg-green-600 transition-all"
+            style={{ width: `${progress.total ? ((progress.sent + progress.failed) / progress.total) * 100 : 0}%` }}
+          />
+        </div>
+        <div className="text-xs flex gap-4">
+          <span>Total: {progress.total}</span>
+          <span>Sent: {progress.sent}</span>
+          <span>Failed: {progress.failed}</span>
+          <span>Remaining: {progress.total - (progress.sent + progress.failed)}</span>
+        </div>
+        <div className="max-h-48 overflow-auto border rounded text-xs font-mono bg-white">
+          <ul className="divide-y">
+            {logs.map(l => (
+              <li key={l.index} className="px-2 py-1 flex gap-2">
+                <span className="w-12 text-right">#{l.index}</span>
+                <span className="flex-1 truncate">{l.to}</span>
+                <span className={l.status === 'sent' ? 'text-green-700' : 'text-red-700'}>{l.status}</span>
+                {l.error && <span className="text-red-500 truncate" title={l.error}>{l.error}</span>}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     )}

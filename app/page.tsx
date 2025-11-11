@@ -7,6 +7,7 @@ import TemplateManager from "./components/ui/TemplateManager";
 import PreviewPane from "./components/ui/PreviewPane";
 import CsvTable from "./components/ui/CsvTable";
 import Tabs from "./components/ui/Tabs";
+import Docs from "./components/sections/Docs";
 
 type RenderedEmail = {
   to: string;
@@ -123,6 +124,15 @@ function PageInner() {
                   subjectTemplate={subjectTemplate}
                   onSubjectChange={setSubjectTemplate}
                 />
+              ),
+            },
+            {
+              id: "docs",
+              label: "Documentation",
+              content: (
+                <div className="space-y-4">
+                  <Docs />
+                </div>
               ),
             },
           ]}
