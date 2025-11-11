@@ -10,8 +10,9 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 function isPublicPath(pathname: string) {
-  if (pathname === '/') return false; // gate root
+  if (pathname === '/') return false; // gate root page
   if (pathname.startsWith('/_next')) return true;
+  if (pathname.startsWith('/api/')) return true; // don't redirect API calls from middleware
   for (const p of PUBLIC_PATHS) {
     if (pathname === p || pathname.startsWith(p + '/')) return true;
   }
@@ -23,7 +24,20 @@ function isPublicPath(pathname: string) {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (isPublicPath(pathname)) return NextResponse.next();
+
+  // Only redirect for HTML page navigations
+  const accept = req.headers.get('accept') || '';
+  const isHtml = accept.includes('text/html') || (!/[.][a-zA-Z0-9]+$/.test(pathname) && !pathname.startsWith('/api/'));
+  if (!isHtml) return NextResponse.next();
+
   const token = req.cookies.get('batchmail_auth')?.value;
+  // If user hits /login while already authenticated, bounce to target or home
+  if (pathname === '/login' && token) {
+    const url = new URL('/', req.url);
+    const dest = req.nextUrl.searchParams.get('redirect');
+    if (dest) url.pathname = dest;
+    return NextResponse.redirect(url);
+  }
   if (!token) {
     const loginUrl = new URL('/login', req.url);
     loginUrl.searchParams.set('redirect', pathname);
@@ -33,5 +47,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!api/auth/login|api/auth/logout).*)'],
+  matcher: ['/:path*'],
 };
