@@ -29,6 +29,11 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
   const [envOk, setEnvOk] = useState<boolean | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
   const [systemVariant, setSystemVariantState] = useState<'default'|'icpep'|'cisco'>('default');
+  // Default (.env) variant supports optional one-off upload/paste overrides (not persistent profiles)
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteValue, setPasteValue] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [overrideApplied, setOverrideApplied] = useState(false);
   
 
   useEffect(() => {
@@ -160,6 +165,73 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
     }
   }, [ready, csv, mapping, template, subjectTemplate, attachmentsByName]);
 
+  // Upload local .env to override default credentials (only allowed in default variant)
+  const uploadEnvFile = async (file: File) => {
+    if (systemVariant !== 'default') return; // safety
+    const fd = new FormData();
+    fd.append('file', file);
+    setUploading(true);
+    try {
+      const res = await fetch('/api/env/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      const chk = await fetch('/api/env');
+      const d2 = await chk.json();
+      setEnvOk(!!d2.ok);
+      setMissing(Array.isArray(d2.missing) ? d2.missing : []);
+      if (!res.ok || !data.ok) {
+        alert(`.env upload processed but missing: ${data.missing?.join(', ') || 'unknown'}`);
+      } else {
+        setOverrideApplied(true);
+      }
+    } catch (e) {
+      alert(`.env upload failed: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const submitPaste = async () => {
+    if (systemVariant !== 'default') { setShowPaste(false); return; }
+    if (!pasteValue.trim()) { setShowPaste(false); return; }
+    setUploading(true);
+    try {
+      const res = await fetch('/api/env/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ envText: pasteValue }) });
+      const data = await res.json();
+      const chk = await fetch('/api/env');
+      const d2 = await chk.json();
+      setEnvOk(!!d2.ok);
+      setMissing(Array.isArray(d2.missing) ? d2.missing : []);
+      if (!res.ok || !data.ok) {
+        alert(`Paste processed but missing: ${data.missing?.join(', ') || 'unknown'}`);
+      } else {
+        setOverrideApplied(true);
+      }
+    } catch (e) {
+      alert(`Paste failed: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
+      setShowPaste(false);
+      setPasteValue("");
+    }
+  };
+
+  const clearOverride = async () => {
+    if (systemVariant !== 'default') return;
+    setUploading(true);
+    try {
+      await fetch('/api/env/clear', { method: 'POST' });
+      const chk = await fetch('/api/env');
+      const d2 = await chk.json();
+      setEnvOk(!!d2.ok);
+      setMissing(Array.isArray(d2.missing) ? d2.missing : []);
+      setOverrideApplied(false);
+    } catch (e) {
+      alert(`Clear failed: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <>
     <div className="rounded-lg border p-4 space-y-4">
@@ -204,6 +276,18 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
             if (isCisco) return <Image src="/cisco-logo.jpg" alt="Cisco" width={80} height={32} className="h-8 w-auto rounded-sm border" />;
             return null;
           })()}
+          {systemVariant === 'default' && (
+            <>
+              <label className="px-3 py-1 rounded border text-sm bg-white text-gray-900 hover:bg-gray-50 cursor-pointer">
+                <input type="file" accept=".env,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadEnvFile(f); }} />
+                {uploading ? 'Uploading…' : (overrideApplied ? 'Re-upload .env' : 'Upload .env')}
+              </label>
+              <button type="button" onClick={() => setShowPaste(true)} className="px-3 py-1 rounded border text-sm bg-white hover:bg-gray-50">Paste .env</button>
+              {overrideApplied && (
+                <button type="button" onClick={clearOverride} disabled={uploading} className="px-3 py-1 rounded border text-sm bg-white hover:bg-gray-50 disabled:opacity-50">Clear override</button>
+              )}
+            </>
+          )}
           <button
             type="button"
             disabled={!ready}
@@ -302,7 +386,21 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
         </div>
       </div>
     </div>
-    {/* Paste/Upload removed with profiles */}
+    {showPaste && systemVariant === 'default' && (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+        <div className="bg-white rounded shadow-lg w-full max-w-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Paste .env content</h3>
+            <button onClick={() => setShowPaste(false)} className="text-xs px-2 py-1 border rounded">Close</button>
+          </div>
+          <textarea value={pasteValue} onChange={(e) => setPasteValue(e.target.value)} rows={8} className="w-full border rounded p-2 text-xs font-mono" placeholder="SENDER_EMAIL=you@example.com\nSENDER_APP_PASSWORD=app-password\nSENDER_NAME=Your Name" />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setShowPaste(false)} className="px-3 py-1 border rounded text-sm">Cancel</button>
+            <button onClick={submitPaste} disabled={uploading} className="px-3 py-1 border rounded text-sm bg-green-600 text-white disabled:opacity-50">Save</button>
+          </div>
+        </div>
+      </div>
+    )}
     {/* Streaming progress UI removed */}
     {showSendModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
