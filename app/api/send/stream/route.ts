@@ -31,12 +31,14 @@ type Payload = {
   attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
   // optional delay in ms between sends
   delayMs?: number;
+  // optional jitter in ms applied around delay (+/- jitter)
+  jitterMs?: number;
 };
 
 export async function POST(req: Request) {
   let payloadUnknown: unknown;
   try { payloadUnknown = await req.json(); } catch { return NextResponse.json({ ok:false, error:"Invalid JSON" }, { status:400 }); }
-  const { rows, mapping, template, subjectTemplate, attachmentsByName, delayMs } = (payloadUnknown || {}) as Payload;
+  const { rows, mapping, template, subjectTemplate, attachmentsByName, delayMs, jitterMs } = (payloadUnknown || {}) as Payload;
   if (!rows || !Array.isArray(rows) || !mapping || !template) {
     return NextResponse.json({ ok:false, error:"Missing required fields" }, { status:400 });
   }
@@ -60,6 +62,7 @@ export async function POST(req: Request) {
   let failed = 0;
   const norm = (s: string) => String(s || "").trim().toLowerCase();
   const delay = typeof delayMs === 'number' && delayMs > 0 ? delayMs : 2000; // default 2s
+  const jitter = typeof jitterMs === 'number' && jitterMs >= 0 ? Math.floor(jitterMs) : 250; // default 250ms
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -84,9 +87,11 @@ export async function POST(req: Request) {
           failed++;
           enqueue({ type:"item", index: current, to: r[mapping.recipient], status:"error", error: (e as Error).message, subject: subj, attachments: atts.length, timestamp: new Date().toISOString() });
         }
-        // delay between sends to avoid overloading provider
-        if (delay > 0) {
-          await new Promise(res => setTimeout(res, delay));
+        // delay between sends to avoid overloading provider (skip after last)
+        if (delay > 0 && index < filtered.length) {
+          const jitterOffset = jitter > 0 ? Math.floor((Math.random() * 2 - 1) * jitter) : 0;
+          const wait = Math.max(0, delay + jitterOffset);
+          await new Promise(res => setTimeout(res, wait));
         }
       }
       enqueue({ type:"done", sent, failed });
