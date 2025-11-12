@@ -28,6 +28,8 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
   const [isSending, setIsSending] = useState(false);
   const [cooldownSec, setCooldownSec] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  // User-selectable batch size (3 or 4)
+  const [batchSize, setBatchSize] = useState<number>(4);
   const ready = !!csv && !!mapping && !!template?.trim();
   const [envOk, setEnvOk] = useState<boolean | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
@@ -93,16 +95,16 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
       .map((r) => String(r[mapping.recipient]));
   }, [csv, mapping]);
 
-  // Preview batches (size 4) so user can see grouping before sending
+  // Preview batches (size = batchSize) so user can see grouping before sending
   const batchPreview = useMemo(() => {
     const list: Array<{ batch:number; recipients:string[] }> = [];
     if (!recipients || recipients.length === 0) return list;
-    const SIZE = 4;
+    const SIZE = batchSize === 3 ? 3 : 4; // enforce only 3 or 4
     for (let i = 0; i < recipients.length; i += SIZE) {
       list.push({ batch: (i / SIZE) + 1, recipients: recipients.slice(i, i + SIZE) });
     }
     return list;
-  }, [recipients]);
+  }, [recipients, batchSize]);
 
   const availableVars = useMemo(() => {
     const s = new Set<string>();
@@ -142,7 +144,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
     if (!ready || !csv || !mapping) return;
     const allRows = csv.rows.filter(r => r[mapping.recipient]);
     const total = allRows.length;
-    const BATCH_SIZE = 4; // Vercel Hobby: keep under ~10s (4 emails * ~2s)
+  const BATCH_SIZE = batchSize === 3 ? 3 : 4; // constrain
     setShowSendModal(true);
     setSendModalLogs([]);
     setSendModalSummary({ sent:0, failed:0 });
@@ -214,7 +216,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
       setIsSending(false);
       setCooldownSec(5);
     }
-  }, [ready, csv, mapping, template, subjectTemplate, attachmentsByName]);
+  }, [ready, csv, mapping, template, subjectTemplate, attachmentsByName, batchSize]);
 
   // Upload local .env to override default credentials (only allowed in default variant)
   const uploadEnvFile = async (file: File) => {
@@ -444,6 +446,41 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
             <span>Batches (preview)</span>
             <span className="text-xs opacity-70">{batchPreview.length} total</span>
           </div>
+          {/* Batch size selector */}
+          <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="opacity-70">Batch size:</span>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="radio"
+                  name="batchSize"
+                  value={3}
+                  checked={batchSize === 3}
+                  onChange={() => setBatchSize(3)}
+                  className="accent-gray-800"
+                />
+                <span>3</span>
+              </label>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="radio"
+                  name="batchSize"
+                  value={4}
+                  checked={batchSize === 4}
+                  onChange={() => setBatchSize(4)}
+                  className="accent-gray-800"
+                />
+                <span>4</span>
+              </label>
+            </div>
+            <div className="text-[11px] text-gray-600">
+              {attachmentsByName && Object.values(attachmentsByName).some(arr => Array.isArray(arr) && arr.length > 0) ? (
+                <span><strong>Tip:</strong> Attachments detected. Prefer <strong>3 per batch</strong> to stay under function time limits.</span>
+              ) : (
+                <span><strong>Tip:</strong> No attachments detected. You can use <strong>4 per batch</strong> for faster overall sending.</span>
+              )}
+            </div>
+          </div>
           <div className="max-h-48 overflow-auto text-xs bg-gray-50 border rounded">
             <ul className="divide-y">
               {batchPreview.map((b) => (
@@ -455,7 +492,7 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
             </ul>
           </div>
           <div className="text-[11px] text-gray-600">
-            Each batch contains up to 4 recipients. This helps keep each request under time limits and pairs with the per‑email delay to avoid provider throttling.
+            Sending is performed sequentially per batch with a jittered ~2s delay per email to reduce throttling and avoid serverless timeouts.
           </div>
         </div>
       )}
