@@ -23,6 +23,8 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
   const [sendModalLogs, setSendModalLogs] = useState<Array<{ to:string; status:string; subject?: string; error?: string; messageId?: string; attachments?: number; timestamp?: string }>>([]);
   const [sendModalSummary, setSendModalSummary] = useState<{ sent:number; failed:number }>({ sent: 0, failed: 0 });
   const [sendModalTotal, setSendModalTotal] = useState<number | null>(null);
+  const [currentBatchIndex, setCurrentBatchIndex] = useState<number>(0);
+  const [batchAssignments, setBatchAssignments] = useState<Array<{ batch:number; recipients:string[] }>>([]);
   const [isSending, setIsSending] = useState(false);
   const [cooldownSec, setCooldownSec] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -91,6 +93,17 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
       .map((r) => String(r[mapping.recipient]));
   }, [csv, mapping]);
 
+  // Preview batches (size 4) so user can see grouping before sending
+  const batchPreview = useMemo(() => {
+    const list: Array<{ batch:number; recipients:string[] }> = [];
+    if (!recipients || recipients.length === 0) return list;
+    const SIZE = 4;
+    for (let i = 0; i < recipients.length; i += SIZE) {
+      list.push({ batch: (i / SIZE) + 1, recipients: recipients.slice(i, i + SIZE) });
+    }
+    return list;
+  }, [recipients]);
+
   const availableVars = useMemo(() => {
     const s = new Set<string>();
     if (csv?.headers) csv.headers.forEach((h) => s.add(h));
@@ -127,51 +140,73 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
 
   const doSendEmails = useCallback(async () => {
     if (!ready || !csv || !mapping) return;
-  setShowSendModal(true);
-  setSendModalLogs([]);
-  setSendModalSummary({ sent:0, failed:0 });
-  setSendModalTotal(null);
+    const allRows = csv.rows.filter(r => r[mapping.recipient]);
+    const total = allRows.length;
+    const BATCH_SIZE = 4; // Vercel Hobby: keep under ~10s (4 emails * ~2s)
+    setShowSendModal(true);
+    setSendModalLogs([]);
+    setSendModalSummary({ sent:0, failed:0 });
+    setSendModalTotal(total);
+    // Compute and expose batch groupings for UI
+    const assignments: Array<{ batch:number; recipients:string[] }> = [];
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const recips = allRows.slice(i, i + BATCH_SIZE).map(r => String(r[mapping.recipient]));
+      assignments.push({ batch: (i / BATCH_SIZE) + 1, recipients: recips });
+    }
+    setBatchAssignments(assignments);
     try {
       setIsSending(true);
-      const body = {
-        rows: csv.rows.filter(r => r[mapping.recipient]),
-        mapping,
-        template,
-        subjectTemplate: subjectTemplate?.trim() || undefined,
-        attachmentsByName,
-        delayMs: 2000,
-      };
-      const res = await fetch('/api/send/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => null);
-        alert(data?.error || 'Send failed');
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, idx).trim();
+      for (let start = 0; start < total; start += BATCH_SIZE) {
+        setCurrentBatchIndex(start / BATCH_SIZE);
+        const batch = allRows.slice(start, start + BATCH_SIZE);
+        const body = {
+          rows: batch,
+          mapping,
+          template,
+          subjectTemplate: subjectTemplate?.trim() || undefined,
+          attachmentsByName,
+          delayMs: 2000,
+          jitterMs: 250,
+        };
+        const res = await fetch('/api/send/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!res.ok || !res.body) {
+          const data = await res.json().catch(() => null);
+          // mark whole batch as failed
+          for (const r of batch) {
+            const to = String(r[mapping.recipient] || '');
+            setSendModalLogs(prev => [...prev, { to, status:'error', error: data?.error || 'Batch failed', attachments: 0, timestamp: new Date().toISOString() }]);
+          }
+          setSendModalSummary(prev => ({ sent: prev.sent, failed: prev.failed + batch.length }));
+          continue;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, idx).trim();
             buffer = buffer.slice(idx + 1);
             if (!line) continue;
             try {
               const obj = JSON.parse(line);
               if (obj.type === 'start') {
-                setSendModalTotal(typeof obj.total === 'number' ? obj.total : null);
+                // keep total as overall; only set if not yet set
+                setSendModalTotal(prev => (prev == null ? (typeof obj.total === 'number' ? obj.total : null) : prev));
               } else if (obj.type === 'item') {
                 setSendModalLogs(prev => [...prev, { to: obj.to, status: obj.status, subject: obj.subject, error: obj.error, messageId: obj.messageId, attachments: obj.attachments, timestamp: obj.timestamp }]);
                 setSendModalSummary(prev => ({ sent: obj.status === 'sent' ? prev.sent + 1 : prev.sent, failed: obj.status === 'error' ? prev.failed + 1 : prev.failed }));
               } else if (obj.type === 'done') {
-                // final validation of counts
-                setSendModalSummary({ sent: obj.sent, failed: obj.failed });
+                // no-op; counts already tracked
               }
             } catch {}
+          }
         }
+        // small pause between batches
+        await new Promise(r => setTimeout(r, 200));
       }
     } catch (e) {
       alert(`Send error: ${(e as Error).message}`);
@@ -401,6 +436,29 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
           {/* Editor removed from Preview; edit HTML in Template tab */}
         </div>
       </div>
+
+      {/* Batches preview (always visible when recipients exist) */}
+      {batchPreview.length > 0 && (
+        <div className="border rounded p-3 bg-white space-y-2">
+          <div className="text-sm font-medium flex items-center gap-2">
+            <span>Batches (preview)</span>
+            <span className="text-xs opacity-70">{batchPreview.length} total</span>
+          </div>
+          <div className="max-h-48 overflow-auto text-xs bg-gray-50 border rounded">
+            <ul className="divide-y">
+              {batchPreview.map((b) => (
+                <li key={`batch-${b.batch}`} className="px-3 py-2">
+                  <div className="font-medium">Batch {b.batch}</div>
+                  <div className="text-gray-700 break-words">{b.recipients.join(', ')}</div>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="text-[11px] text-gray-600">
+            Each batch contains up to 4 recipients. This helps keep each request under time limits and pairs with the per‑email delay to avoid provider throttling.
+          </div>
+        </div>
+      )}
     </div>
     {showPaste && systemVariant === 'default' && (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -429,11 +487,33 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
             <div className="text-xs flex gap-4 items-center">
               <span><strong>Sent:</strong> {sendModalSummary.sent}</span>
               <span><strong>Failed:</strong> {sendModalSummary.failed}</span>
+              {typeof sendModalTotal === 'number' && (
+                <span><strong>Remaining:</strong> {Math.max(0, sendModalTotal - (sendModalSummary.sent + sendModalSummary.failed))}</span>
+              )}
               {isSending && <span className="opacity-70 animate-pulse">In Progress…</span>}
             </div>
             {typeof sendModalTotal === 'number' && (
               <div className="w-full h-2 bg-gray-200 rounded">
                 <div className="h-2 bg-green-600 rounded" style={{ width: `${Math.min(100, Math.floor(((sendModalSummary.sent + sendModalSummary.failed) / (sendModalTotal || 1)) * 100))}%` }} />
+              </div>
+            )}
+            {/* Batch overview */}
+            {batchAssignments.length > 0 && (
+              <div className="border rounded p-2 bg-gray-50 text-xs">
+                <div className="mb-1 font-medium">Batches</div>
+                <div className="flex flex-col gap-1 max-h-32 overflow-auto">
+                  {batchAssignments.map((b, idx) => (
+                    <div key={idx} className={`flex gap-2 items-start ${idx === currentBatchIndex ? 'text-green-700' : ''}`}>
+                      <span className="min-w-[60px] inline-block">Batch {b.batch}:</span>
+                      <span className="flex-1 break-words">{b.recipients.join(', ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {isSending && (
+              <div className="text-xs text-gray-600 bg-yellow-50 border border-yellow-200 rounded p-2">
+                Sending is paced with a ~2 second delay per email to reduce the risk of provider throttling, rate limits, or spam detection. This helps keep delivery reliable when sending to many recipients.
               </div>
             )}
             <div className="max-h-72 overflow-auto border rounded text-xs font-mono bg-white">

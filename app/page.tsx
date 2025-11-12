@@ -26,6 +26,7 @@ function PageInner() {
   const [template, setTemplate] = useState<string>("<html>\n  <body>\n    <p>Hello {{ name }},</p>\n    <p>This is a sample template. Replace me!</p>\n  </body>\n</html>");
   const [subjectTemplate, setSubjectTemplate] = useState<string>("{{ subject }}");
   const [attachmentsByName, setAttachmentsByName] = useState<AttachIndex>({});
+  const [hasSelectedTemplate, setHasSelectedTemplate] = useState<boolean>(false);
 
 
   // Keep a derived indicator but avoid unused variable warnings.
@@ -70,7 +71,12 @@ function PageInner() {
               content: (
                 <div className="space-y-4">
                   <CsvUploader
-                    onParsed={(data: { csv: ParsedCsv; mapping: CsvMapping }) => { setCsv(data.csv); setMapping(data.mapping); }}
+                    onParsed={(data: { csv: ParsedCsv; mapping: CsvMapping }) => {
+                      setCsv(data.csv);
+                      setMapping(data.mapping);
+                      // Reset template selection on new CSV to reduce mistakes
+                      setHasSelectedTemplate(false);
+                    }}
                     currentMapping={mapping ?? undefined}
                   />
                   <AttachmentsUploader
@@ -100,7 +106,7 @@ function PageInner() {
                     return Array.from(s);
                   }, [csv, mapping])}
                   initialHtml={template}
-                  onUseTemplate={({ html }) => { setTemplate(html); }}
+                  onUseTemplate={({ html }) => { setTemplate(html); setHasSelectedTemplate(true); }}
                 />
               ),
             },
@@ -130,6 +136,22 @@ function PageInner() {
             },
           ]}
           initialId={(searchParams.get("tab") as string) || "csv"}
+          isDisabled={(id) => {
+            if (id === 'template') {
+              return !csv; // block if no CSV uploaded yet
+            }
+            if (id === 'preview') {
+              // require CSV+mapping and explicit template selection via "Use this template"
+              return !csv || !mapping || !hasSelectedTemplate;
+            }
+            return false;
+          }}
+          getDisabledTitle={(id) => {
+            if (id === 'template' && !csv) return 'Upload a CSV first to configure the template.';
+            if (id === 'preview' && (!csv || !mapping)) return 'Upload CSV and set column mapping first.';
+            if (id === 'preview' && !hasSelectedTemplate) return 'Choose a template and click "Use this template" first.';
+            return undefined;
+          }}
           onChange={(id) => {
             const usp = new URLSearchParams(Array.from(searchParams.entries()));
             usp.set("tab", id);
