@@ -20,8 +20,9 @@ type Props = {
 
 export default function PreviewPane({ csv, mapping, template, onExportJson, subjectTemplate = "", onSubjectChange, attachmentsByName }: Props) {
   const [showSendModal, setShowSendModal] = useState(false);
-  const [sendModalLogs, setSendModalLogs] = useState<Array<{ to:string; status:string; subject?: string; error?: string; messageId?: string; attachments?: number }>>([]);
+  const [sendModalLogs, setSendModalLogs] = useState<Array<{ to:string; status:string; subject?: string; error?: string; messageId?: string; attachments?: number; timestamp?: string }>>([]);
   const [sendModalSummary, setSendModalSummary] = useState<{ sent:number; failed:number }>({ sent: 0, failed: 0 });
+  const [sendModalTotal, setSendModalTotal] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [cooldownSec, setCooldownSec] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -126,37 +127,52 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
 
   const doSendEmails = useCallback(async () => {
     if (!ready || !csv || !mapping) return;
+  setShowSendModal(true);
+  setSendModalLogs([]);
+  setSendModalSummary({ sent:0, failed:0 });
+  setSendModalTotal(null);
     try {
       setIsSending(true);
-      const body: {
-        rows: Array<Record<string,string>>;
-        mapping: typeof mapping;
-        template: string;
-        subjectTemplate?: string;
-        attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
-      } = {
+      const body = {
         rows: csv.rows.filter(r => r[mapping.recipient]),
         mapping,
         template,
         subjectTemplate: subjectTemplate?.trim() || undefined,
         attachmentsByName,
+        delayMs: 2000,
       };
-      const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await res.json();
-      if (!res.ok) {
+      const res = await fetch('/api/send/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => null);
         alert(data?.error || 'Send failed');
+        return;
       }
-      type ApiSuccess = { to: string; messageId?: string; subject?: string; attachedCount?: number };
-      type ApiFailure = { to?: string; subject?: string; error: string; attemptedAttachments?: number };
-      const successes: ApiSuccess[] = Array.isArray(data?.successes) ? (data.successes as ApiSuccess[]) : [];
-      const failures: ApiFailure[] = Array.isArray(data?.failures) ? (data.failures as ApiFailure[]) : [];
-      const modalLogs = [
-        ...successes.map(s => ({ to: s.to, status: 'sent', subject: s.subject, messageId: s.messageId, attachments: s.attachedCount })),
-        ...failures.map(f => ({ to: f.to || '-', status: 'error', subject: f.subject, error: f.error, attachments: f.attemptedAttachments }))
-      ];
-      setSendModalLogs(modalLogs);
-      setSendModalSummary({ sent: Number(data?.sent) || successes.length, failed: Number(data?.failed) || failures.length });
-      setShowSendModal(true);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx + 1);
+            if (!line) continue;
+            try {
+              const obj = JSON.parse(line);
+              if (obj.type === 'start') {
+                setSendModalTotal(typeof obj.total === 'number' ? obj.total : null);
+              } else if (obj.type === 'item') {
+                setSendModalLogs(prev => [...prev, { to: obj.to, status: obj.status, subject: obj.subject, error: obj.error, messageId: obj.messageId, attachments: obj.attachments, timestamp: obj.timestamp }]);
+                setSendModalSummary(prev => ({ sent: obj.status === 'sent' ? prev.sent + 1 : prev.sent, failed: obj.status === 'error' ? prev.failed + 1 : prev.failed }));
+              } else if (obj.type === 'done') {
+                // final validation of counts
+                setSendModalSummary({ sent: obj.sent, failed: obj.failed });
+              }
+            } catch {}
+        }
+      }
     } catch (e) {
       alert(`Send error: ${(e as Error).message}`);
     } finally {
@@ -406,20 +422,27 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
         <div className="bg-white w-full max-w-3xl rounded shadow-lg">
           <div className="px-4 py-3 border-b flex items-center justify-between">
-            <div className="text-sm font-medium">Send Summary</div>
+            <div className="text-sm font-medium">{isSending ? 'Sending… Live Log' : 'Send Summary'}</div>
             <button className="text-xs px-2 py-1 border rounded" onClick={() => setShowSendModal(false)}>Close</button>
           </div>
           <div className="p-4 space-y-3">
-            <div className="text-xs flex gap-4">
+            <div className="text-xs flex gap-4 items-center">
               <span><strong>Sent:</strong> {sendModalSummary.sent}</span>
               <span><strong>Failed:</strong> {sendModalSummary.failed}</span>
+              {isSending && <span className="opacity-70 animate-pulse">In Progress…</span>}
             </div>
+            {typeof sendModalTotal === 'number' && (
+              <div className="w-full h-2 bg-gray-200 rounded">
+                <div className="h-2 bg-green-600 rounded" style={{ width: `${Math.min(100, Math.floor(((sendModalSummary.sent + sendModalSummary.failed) / (sendModalTotal || 1)) * 100))}%` }} />
+              </div>
+            )}
             <div className="max-h-72 overflow-auto border rounded text-xs font-mono bg-white">
               <table className="min-w-full text-xs">
                 <thead className="sticky top-0 bg-gray-50">
                   <tr>
                     <th className="text-left px-2 py-1 border">Recipient</th>
                     <th className="text-left px-2 py-1 border">Status</th>
+                    <th className="text-left px-2 py-1 border">Time</th>
                     <th className="text-left px-2 py-1 border">Subject</th>
                     <th className="text-left px-2 py-1 border">Attachments</th>
                     <th className="text-left px-2 py-1 border">Message / Error</th>
@@ -430,11 +453,17 @@ export default function PreviewPane({ csv, mapping, template, onExportJson, subj
                     <tr key={i} className="odd:bg-white even:bg-gray-50">
                       <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.to}</td>
                       <td className={`px-2 py-1 border ${l.status === 'sent' ? 'text-green-700' : 'text-red-700'}`}>{l.status}</td>
+                      <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : ''}</td>
                       <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.subject || ''}</td>
                       <td className="px-2 py-1 border">{typeof l.attachments === 'number' ? l.attachments : ''}</td>
                       <td className="px-2 py-1 border whitespace-pre-wrap break-words">{l.error || l.messageId || ''}</td>
                     </tr>
                   ))}
+                  {isSending && sendModalLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-2 py-4 text-center text-gray-500">Starting…</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
