@@ -22,12 +22,21 @@ function renderTemplate(html: string, subject: string | undefined, row: Record<s
 
 type Mapping = { recipient: string; name: string; subject?: string };
 type Row = Record<string, string>;
-type Payload = { rows: Row[]; mapping: Mapping; template: string; subjectTemplate?: string };
+type Payload = {
+  rows: Row[];
+  mapping: Mapping;
+  template: string;
+  subjectTemplate?: string;
+  // optional attachments keyed by normalized name
+  attachmentsByName?: Record<string, Array<{ filename: string; contentBase64: string; contentType?: string }>>;
+  // optional delay in ms between sends
+  delayMs?: number;
+};
 
 export async function POST(req: Request) {
   let payloadUnknown: unknown;
   try { payloadUnknown = await req.json(); } catch { return NextResponse.json({ ok:false, error:"Invalid JSON" }, { status:400 }); }
-  const { rows, mapping, template, subjectTemplate } = (payloadUnknown || {}) as Payload;
+  const { rows, mapping, template, subjectTemplate, attachmentsByName, delayMs } = (payloadUnknown || {}) as Payload;
   if (!rows || !Array.isArray(rows) || !mapping || !template) {
     return NextResponse.json({ ok:false, error:"Missing required fields" }, { status:400 });
   }
@@ -49,6 +58,8 @@ export async function POST(req: Request) {
   let index = 0;
   let sent = 0;
   let failed = 0;
+  const norm = (s: string) => String(s || "").trim().toLowerCase();
+  const delay = typeof delayMs === 'number' && delayMs > 0 ? delayMs : 2000; // default 2s
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -57,13 +68,25 @@ export async function POST(req: Request) {
       for (const r of filtered) {
         const current = index++;
         const { body, subj } = renderTemplate(template, subjectTemplate, r, mapping);
+        const nameKey = norm(r[mapping.name]);
+        const atts = nameKey && attachmentsByName ? (attachmentsByName[nameKey] || []) : [];
         try {
-          const info = await transporter.sendMail({ from: `${SENDER_NAME} <${SENDER_EMAIL}>`, to: r[mapping.recipient], subject: subj, html: body });
+          const info = await transporter.sendMail({
+            from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
+            to: r[mapping.recipient],
+            subject: subj,
+            html: body,
+            attachments: atts.map(a => ({ filename: a.filename, content: a.contentBase64, encoding: 'base64', contentType: a.contentType })),
+          });
           sent++;
-          enqueue({ type:"item", index: current, to: r[mapping.recipient], status:"sent", messageId: info.messageId, subject: subj });
+          enqueue({ type:"item", index: current, to: r[mapping.recipient], status:"sent", messageId: info.messageId, subject: subj, attachments: atts.length, timestamp: new Date().toISOString() });
         } catch (e) {
           failed++;
-          enqueue({ type:"item", index: current, to: r[mapping.recipient], status:"error", error: (e as Error).message, subject: subj });
+          enqueue({ type:"item", index: current, to: r[mapping.recipient], status:"error", error: (e as Error).message, subject: subj, attachments: atts.length, timestamp: new Date().toISOString() });
+        }
+        // delay between sends to avoid overloading provider
+        if (delay > 0) {
+          await new Promise(res => setTimeout(res, delay));
         }
       }
       enqueue({ type:"done", sent, failed });
