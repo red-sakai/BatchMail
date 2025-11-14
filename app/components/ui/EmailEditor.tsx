@@ -62,7 +62,7 @@ function EmailEditorInner({ value, onChange }: Props, refForward: React.Ref<Emai
   return (
     <div className="space-y-2">
       {/* Formatting toolbar only; variable insertion controlled externally to prevent overflow */}
-      <div className="flex gap-2 pb-1 overflow-x-auto max-w-full">
+      <div className="flex gap-2 pb-1 overflow-x-auto max-w-full editor-toolbar">
         <div className="inline-flex items-center gap-1 flex-shrink-0">
           <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => exec("bold")}>Bold</button>
           <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => exec("italic")}>Italic</button>
@@ -74,7 +74,7 @@ function EmailEditorInner({ value, onChange }: Props, refForward: React.Ref<Emai
 
       <div
         ref={ref}
-        className="min-h-40 w-full border rounded p-3 bg-white text-sm"
+        className="email-editor-surface min-h-40 w-full border rounded p-3 bg-white text-sm"
         contentEditable
         suppressContentEditableWarning
         onInput={notify}
