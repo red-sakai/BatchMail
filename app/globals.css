@@ -43,3 +43,127 @@ body {
   border-radius: 0.75rem;
   box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.1);
 }
+
+/* ===== Dark theme overrides (activated by wrapping container with class "dark") ===== */
+.dark {
+  --background: #0b0f1a; /* deep slate */
+  --foreground: #f3f4f6; /* gray-100 */
+  --border: #253145; /* slate-700ish */
+}
+
+.dark body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Text overrides for common gray/black classes to ensure readability */
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-black { color: #f3f4f6; }
+.dark .text-gray-600 { color: #e5e7eb; }
+.dark .text-gray-500 { color: #cbd5e1; }
+
+/* Background overrides for common light backgrounds used across components */
+.dark .bg-white { background-color: #111827; }
+.dark .bg-gray-50 { background-color: #0f172a; }
+.dark .bg-gray-100 { background-color: #0f172a; }
+.dark .bg-yellow-50 { background-color: #3f3300; }
+
+/* Hover utilities commonly used */
+.dark .hover\:bg-gray-50:hover { background-color: #0f172a; }
+.dark .hover\:bg-gray-100:hover { background-color: #0f172a; }
+
+/* Borders */
+.dark .border { border-color: var(--border); }
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .border-gray-800 { border-color: var(--border); }
+
+/* Inputs, selects, textareas */
+.dark input,
+.dark select,
+.dark textarea { background-color: #0f172a; color: #f3f4f6; border-color: var(--border); }
+.dark input::placeholder,
+.dark textarea::placeholder { color: #9ca3af; }
+
+/* Tables and alternating rows */
+.dark table { background-color: #0b0f1a; color: #e5e7eb; }
+.dark thead { background-color: #111827; }
+.dark th, .dark td { border-color: var(--border); }
+.dark tbody tr:nth-child(odd) { background-color: #0b1020; }
+.dark tbody tr:nth-child(even) { background-color: #0f172a; }
+
+/* Code blocks or monospace areas if any */
+.dark .font-mono { color: #e5e7eb; }
+
+/* Buttons that are light by default */
+.dark .bg-white.border,
+.dark .border-gray-300.bg-white,
+.dark .border-gray-200.bg-white { background-color: #0f172a; color: #f3f4f6; border-color: var(--border); }
+
+/* Badges/pills tweaks for visibility */
+.dark .bg-green-50 { background-color: #0f2a19; }
+.dark .text-green-800 { color: #86efac; }
+.dark .bg-red-50 { background-color: #2a0f17; }
+.dark .text-red-800 { color: #fda4af; }
+.dark .bg-yellow-100 { background-color: #3f3300; }
+.dark .text-yellow-800 { color: #fde68a; }
+
+/* ===== Keep-light utilities to exclude certain areas from dark ===== */
+.dark .keep-light-surface, .dark .keep-light-surface * {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}
+.dark .keep-light-text { color: #1f2937 !important; }
+.dark .keep-light-pill {
+  background-color: #fef3c7 !important; /* yellow-100 */
+  color: #92400e !important;           /* yellow-800 */
+  border-color: #fde68a !important;     /* yellow-300 */
+}
+
+/* Keep only the actual email editor surface light in dark mode */
+.dark .email-editor-surface {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}
+/* Ensure the email content renders like light mode even in dark */
+.dark .email-editor-surface * {
+  color: #111827 !important;
+}
+/* Revert common Tailwind light classes inside the email viewer */
+.dark .email-editor-surface .text-gray-900 { color: #111827 !important; }
+.dark .email-editor-surface .text-gray-800 { color: #1f2937 !important; }
+.dark .email-editor-surface .text-gray-700 { color: #374151 !important; }
+.dark .email-editor-surface .text-gray-600 { color: #4b5563 !important; }
+.dark .email-editor-surface .text-black { color: #000000 !important; }
+.dark .email-editor-surface .bg-white { background-color: #ffffff !important; }
+.dark .email-editor-surface .bg-gray-50 { background-color: #f9fafb !important; }
+.dark .email-editor-surface .bg-gray-100 { background-color: #f3f4f6 !important; }
+.dark .email-editor-surface .border,
+.dark .email-editor-surface .border-gray-100,
+.dark .email-editor-surface .border-gray-200,
+.dark .email-editor-surface .border-gray-300 { border-color: #e5e7eb !important; }
+
+/* The global dark rules for tables should NOT affect the email viewer */
+.dark .email-editor-surface table,
+.dark .email-editor-surface thead,
+.dark .email-editor-surface tbody,
+.dark .email-editor-surface tr,
+.dark .email-editor-surface th,
+.dark .email-editor-surface td {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}
+.dark .email-editor-surface tbody tr:nth-child(odd),
+.dark .email-editor-surface tbody tr:nth-child(even) {
+  background-color: #ffffff !important;
+}
+
+/* Links and buttons in email content keep light-mode colors */
+.dark .email-editor-surface a { color: #1d4ed8 !important; }
+.dark .email-editor-surface button { color: #111827 !important; }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, Suspense } from "react";
+import { useMemo, useState, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CsvUploader, { CsvMapping, ParsedCsv } from "./components/ui/CsvUploader";
 // Legacy TemplateManager import removed; using TemplateLibrary instead.
@@ -27,10 +27,35 @@ function PageInner() {
   const [subjectTemplate, setSubjectTemplate] = useState<string>("{{ subject }}");
   const [attachmentsByName, setAttachmentsByName] = useState<AttachIndex>({});
   const [hasSelectedTemplate, setHasSelectedTemplate] = useState<boolean>(false);
+  const [darkMode, setDarkMode] = useState<boolean>(false);
 
 
   // Keep a derived indicator but avoid unused variable warnings.
   const totalCount = useMemo(() => (csv?.rowCount ?? 0), [csv]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('batchmail_dark');
+      const enabled = saved ? saved === '1' : false;
+      setDarkMode(enabled);
+      if (typeof document !== 'undefined') {
+        const root = document.documentElement;
+        if (enabled) root.classList.add('dark'); else root.classList.remove('dark');
+      }
+    } catch {}
+  }, []);
+
+  const toggleDark = () => {
+    setDarkMode((d) => {
+      const next = !d;
+      try { localStorage.setItem('batchmail_dark', next ? '1' : '0'); } catch {}
+      if (typeof document !== 'undefined') {
+        const root = document.documentElement;
+        if (next) root.classList.add('dark'); else root.classList.remove('dark');
+      }
+      return next;
+    });
+  };
 
   const onExportJson = async (htmlRender: (row: Record<string, string>) => string) => {
     if (!csv || !mapping) return;
@@ -56,9 +81,32 @@ function PageInner() {
   };
 
   return (
-    <main className="mx-auto max-w-6xl p-6 space-y-6">
+    <div>
+      {/* Global dark/light toggle at top-right */}
+      <button
+        type="button"
+        onClick={toggleDark}
+        aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+        className={`fixed top-4 right-4 z-50 rounded-full border p-2 shadow-sm transition ${darkMode ? 'bg-gray-900 border-gray-800 hover:bg-gray-800 text-gray-100' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-800'}`}
+        title={darkMode ? 'Light mode' : 'Dark mode'}
+      >
+        {darkMode ? (
+          // Moon icon
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+            <path d="M21.752 15.002A9 9 0 0 1 9 2.248a.75.75 0 0 0-.9-.9 10.5 10.5 0 1 0 12.552 12.552.75.75 0 0 0-.9-.898Z" />
+          </svg>
+        ) : (
+          // Sun icon
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+            <path d="M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z" />
+            <path d="M12 2.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V3a.75.75 0 0 1 .75-.75Zm0 15.75a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V18a.75.75 0 0 1 .75-.75Zm9-6a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5H21a.75.75 0 0 1 .75.75ZM5.25 12a.75.75 0 0 1-.75.75H3a.75.75 0 0 1 0-1.5h1.5a.75.75 0 0 1 .75.75ZM18.196 5.804a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 1 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0ZM7.924 16.076a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 0 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0ZM5.804 5.804a.75.75 0 0 1 1.06 0l1.061 1.06A.75.75 0 0 1 6.864 7.925L5.804 6.864a.75.75 0 0 1 0-1.06Zm10.272 10.272a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.061 1.061l-1.06-1.061a.75.75 0 0 1 0-1.06Z" />
+          </svg>
+        )}
+      </button>
+
+      <main className="mx-auto max-w-6xl p-6 space-y-6">
       <header className="space-y-1">
-  <h1 className="text-3xl font-semibold tracking-tight flex items-center gap-2">BatchMail <span className="text-xs font-medium px-2 py-1 rounded bg-yellow-100 text-yellow-800 border border-yellow-300">Beta Test</span></h1>
+      <h1 className="text-3xl font-semibold tracking-tight flex items-center gap-2">BatchMail <span className="keep-light-pill text-xs font-medium px-2 py-1 rounded bg-yellow-100 text-yellow-800 border border-yellow-300">Beta Test</span></h1>
         <p className="text-sm text-gray-800">Upload CSV, edit/upload Jinja-style HTML template, preview, and export. {totalCount ? `(${totalCount} rows)` : ""}</p>
       </header>
 
@@ -160,6 +208,7 @@ function PageInner() {
         />
       </div>
     </main>
+    </div>
   );
 }
 

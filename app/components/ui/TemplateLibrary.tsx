@@ -189,7 +189,7 @@ export default function TemplateLibrary({ availableVars = [], initialHtml, onUse
           {!rawMode ? (
             <EmailEditor ref={editorRef} value={active.html} onChange={(html) => updateActive({ html })} />
           ) : (
-            <textarea value={active.html} onChange={(e) => updateActive({ html: e.target.value })} rows={18} className="w-full border rounded p-3 text-sm font-mono" />
+            <textarea value={active.html} onChange={(e) => updateActive({ html: e.target.value })} rows={18} className="email-editor-surface w-full border rounded p-3 text-sm font-mono bg-white" />
           )}
           {/* Actions moved to header for visibility */}
         </div>
